@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregate, getJson, parseArgs, render } from './report.mjs';
+import { aggregate, collectRuns, getJson, parseArgs, render } from './report.mjs';
 
 const now = Date.parse('2026-09-27T12:00:00Z');
 const run = (n, extras = {}) => ({
@@ -37,6 +37,41 @@ test('unknowns, absent usage and unfinished runs retain separate coverage', () =
   assert.equal(result.share.totals.missingUsage, 2);
   assert.equal(result.share.totals.markerMissing, 2);
   assert.equal(result.repeated.length, 0);
+});
+
+test('upstream on_demand source stays on_demand', () => {
+  const result = aggregate([run(1, { invocationSource: 'on_demand' })], [], now - 86400000, now, 'test-salt');
+  assert.equal(result.rows[0].source, 'on_demand');
+});
+
+test('per-agent limit distinguishes capped and complete windows; unlisted runs are disclosed', async () => {
+  const agents = [{ id: 'a', name: 'Private A' }, { id: 'b', name: 'Private B' }];
+  const calls = [];
+  const fetcher = async (url, options) => {
+    const u = new URL(url);
+    calls.push([u, options]);
+    const agentId = u.searchParams.get('agentId');
+    const rows = agentId === 'a'
+      ? [run(3, { id: 'a-new', agentId: 'a' }), run(2, { id: 'a-old', agentId: 'a' })]
+      : agentId === 'b'
+        ? [run(3, { id: 'b-new', agentId: 'b' }), run(1, { id: 'b-old', agentId: 'b', createdAt: '2026-09-19T00:00:00Z' })]
+        : [run(3, { id: 'a-new', agentId: 'a' }), run(3, { id: 'orphan', agentId: 'deleted-agent' })];
+    return { ok: true, json: async () => rows };
+  };
+  const collected = await collectRuns('http://127.0.0.1:3100', 'secret', 'company', agents, Date.parse('2026-09-20T00:00:00Z'), 2, fetcher);
+  assert.deepEqual(collected.coverage.agents.map(a => a.verdict), ['capped: window starts before oldest fetched run', 'complete']);
+  assert.equal(collected.coverage.unlistedSampleRuns, 1);
+  assert.equal(collected.coverage.verdict.startsWith('incomplete'), true);
+  assert.equal(collected.runs.length, 5);
+  assert.equal(calls.length, 3);
+  assert.equal(calls.every(([, opts]) => opts.method === 'GET' && opts.redirect === 'error'), true);
+  assert.equal(calls.filter(([u]) => u.searchParams.get('summary') === 'true').length, 1);
+  assert.equal(calls.filter(([u]) => u.searchParams.has('agentId') && !u.searchParams.has('summary')).length, 2);
+  const result = aggregate(collected.runs, agents, Date.parse('2026-09-20T00:00:00Z'), now, 'test-salt', collected.coverage);
+  assert.equal(result.share.totals.inWindow, 4);
+  assert.equal(result.share.coverage.unlistedSampleRuns, 1);
+  assert.equal(JSON.stringify(result.share).includes('deleted-agent'), false);
+  assert.equal(JSON.stringify(result.share).includes('Private A'), false);
 });
 
 test('share has only aggregates and hashes, no private API fields', () => {
