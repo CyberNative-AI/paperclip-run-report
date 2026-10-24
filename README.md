@@ -1,3 +1,5 @@
+<p><a href="https://cybernative.ai/"><img src="https://raw.githubusercontent.com/CyberNative-AI/paperclip-run-report/main/assets/cybernative-cn-mark.svg" width="32" height="32" alt="" align="absmiddle"> CyberNative AI LLC</a></p>
+
 # Paperclip run report
 
 A local, read-only report for operators of self-hosted Paperclip. It groups runs by agent, invocation source and Paperclip's recorded liveness state, then lists issues with repeated runs that merit inspection. It makes no network requests except GETs to the Paperclip URL you provide. It does not estimate savings.
